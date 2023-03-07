@@ -1,0 +1,421 @@
+          CamelForth/8052  Implementation Notes  19 Mar 2001
+
+This is based on CamelForth/8051, modified to use only internal RAM
+for stacks, buffers, and Forth data areas.   It requires 256 bytes of
+internal RAM, hence the '8052' designation.
+
+Stacks and buffers are located in the high 128 bytes of internal RAM,
+since they are constrained to indirect addressing only.  This frees
+the more versatile (direct or indirect) low 128 bytes for the user's
+application.
+
+Additional support is provided for the Silicon Laboratories (formerly Cygnal) C8051F with 256 bytes of RAM and 32K of Flash ROM.  Set the
+CYGNAL equate to 1 to compile C8051F support.
+
+                    DIFFERENCES FROM CAMELFORTH/8051
+                    ================================
+
+REVISED USER ALLOCATION
+=======================
+Because of the limited RAM space, many user variables have been changed
+to byte variables.  *** NOTE THAT THIS IS NOT ANS COMPLIANT! ***
+Current user variable assignments:
+        0 USER >IN      Byte
+        1 USER BASE     Byte
+        2 USER STATE    Byte
+        3 USER DP       Byte
+        4 USER 'SOURCE  Two Bytes
+        6 USER LATEST   Cell
+        8 USER HP       Byte
+        9 USER LP       Byte
+       10 USER IDP      Cell
+REMEMBER that you must use C@ and C! with byte user variables!
+
+User variables are now located in low RAM, so they may be saved to
+flash ROM with application variables.  (See SAVE-RAM and RESTORE-RAM.)
+A total of 12 bytes are used, starting at location 08.
+
+MEMORY MAP
+==========
+
+         Internal RAM                         Flash ROM (Cygnal)
+00+-------------------------+        0000+-------------------------+
+  | general registers R0-R7 |            |                         |
+08+-------------------------+            |    CamelForth kernel    |
+  | USER (system) variables |            |                         |
+14+-------------------------+        2000+-------------------------+
+  |  application variables  |            |    application code     |
+  |            |            |            |           |             |
+  |            v            |            |           v             |
+  |                         |            |                         |
+  |                         |            |                         |
+  |                         |        7E00+-------------------------+
+80+-------------------------+            |    reserved (Cygnal)    |
+  | leave stack      ^      |        8000+-------------------------+
+  |      |           |      |            |    initial RAM data     |
+  |      v      HOLD buffer |        807F+-------------------------+     
+8A+-------------------------+
+  |  Terminal Input Buffer  |
+  |            |            |
+  |            v            |                ROM (Generic 8052)
+B2+-------------------------+        0000+-------------------------+
+  | return stack            |            |    CamelForth kernel    |
+  |      |                  |            |                         |
+  |      v           ^      |            |    initial RAM data     |
+  |                  |      |        2000+-------------------------+
+  |              data stack |            /          ...            /
+FF+-------------------------+            /                         /
+                                     E000+-------------------------+
+                                         |    application code     |
+                                         |           |             |
+                                         |           v             |
+                                     FFFF+-------------------------+
+
+NEW WORDS (CAMEL52.ASM)
+=======================
+MARKER   Per the ANS Forth Standard.  A word defined with MARKER will,
+    when executed, remove itself and all subsequent words from the
+    dictionary, and readjust dictionary pointers (RAM and ROM).
+
+    Example usage:  MARKER FRED
+                    ...other stuff...
+                    FRED        ( removes other stuff *and* FRED )
+
+IDOES>   DOES> provides an address in RAM.  Since we may with to build
+    defining words using ROM tables, IDOES> is provided.  When a word
+    defined with IDOES> is executed, it will have the ROM address (not
+    RAM address) on top of stack.  NOTE THAT CREATE STORES THE CURRENT
+    VALUE OF 'HERE' (RAM ADDRESS) IN THE FIRST CELL OF THIS ROM AREA.
+
+    Example usage:  : OFFSET  ( n -- )
+                        CREATE I,   ( create word, store offset in ROM)
+                        IDOES>  ( a -- a+n )
+                        CELL+ I@    ( skip 'HERE', fetch offset)
+                        + ;         ( add offset to top stack item)
+    This example will not work for the Cygnal Flash ROM; see <BUILDS
+    below.
+
+<BUILDS   like CREATE, but does *not* compile a default action (Code
+    Field) for the newly-defined word.  This is required for Flash ROM
+    systems that allow the Code Field to be programmed only *once*.
+    See the discussion below under "kernel modifications".
+
+C+!   ( c a -- )    add 'c' to the addressed RAM byte.
+
+2C@   ( a -- c1 c2 )   fetch two consecutive bytes from RAM, and return
+                       them as two values on the stack.
+
+2C!   ( c1 c2 a -- )   store two values on the stack in two
+                       consecutive RAM locations.
+
+CVARIABLE ( "name" -- )   define a byte-sized RAM variable.
+
+SAVE-RAM ( -- )   (Cygnal C8051F only)  Copy RAM from 08-7F to flash ROM
+                  locations 8000-8077. The flash ROM 8000-807F is
+                  erased first.
+
+RESTORE-RAM ( -- )  Copy initial values from ROM to internal RAM 08-7F.
+                    In the Cygnal C8051F, this table is stored in
+                    Flash ROM 8000-8077 (and can be altered with
+                    SAVE-RAM).  In the generic 8052, the table is stored
+                    in ROM immediately after the kernel.  RESTORE-RAM is
+                    normally used only by CamelForth initialization code.
+
+MAIN ( -- )   Display a signon message, and then start the Forth
+              interpreter.  This is the default startup word in the
+              basic CamelForth kernel.  See "autostart" below.
+
+IDUMP ( adr n -- )   Dumps a region of Code space (ROM).
+
+EXPERIMENTAL VALUE / TO WORDS (TOVALUE.ASM)
+===========================================
+
+VALUE   Per the ANS Forth standard.  This defines a cell variable
+        which returns its value (*not* its address) when invoked.
+        To store a new value into this variable, the prefix TO must be
+        used.
+
+        Example usage:  VALUE FRED
+                        1234 TO FRED    ( stores 1234 in FRED )
+                        FRED            ( returns 1234 )
+
+CVALUE  Like VALUE, but defines a single-byte (character) variable.
+        The actions of TO and +TO are modified accordingly.
+
+TO  ( x -- )  Per the ANS Forth standard.  Store 'x' in the given
+        VALUE.  'x' may be a cell or character, depending on whether the
+        following word is a VALUE or CVALUE.
+        Example usage:   34 TO FRED
+
++TO ( x -- )  Add 'x' to the given VALUE.  'x' may be a cell or
+        character, depending on whether the following word is a VALUE or
+        CVALUE.   Example usage:  1 +TO FRED
+
+ADR ( -- a )  Returns the RAM address of the given VALUE.
+        Example usage:   ADR FRED
+
+EXPERIMENTAL WORDS FOR SFR ACCESS (SFACCESS.ASM)
+================================================
+Because the 8051 Special Function Registers can only be accessed with
+DIRECT addressing, it is necessary to write machine code to use SFRs.
+These words build machine-code Forth words which read and write SFRs,
+and set and clear bits in the bit-addressible SFRs.
+
+SF@: ( a -- )  Builds a Forth word which fetches a given 8051 SFR.
+    Usage:   a SF@: name     where 'a' is the SFR address, 0-FF.
+    Then     name            will fetch a byte from the SFR. ( -- c )
+
+
+SF!: ( a -- )  Builds a Forth word which stores a given 8051 SFR.
+    Usage:   a SF!: name     where 'a' is the SFR address, 0-FF.
+    Then     name            will store a byte in the SFR.  ( c -- )
+
+SFSETB: ( n a -- )  Builds a Forth word which sets a given bit in a
+    given SFR.
+    Usage:   bit# a SFSETB: name    where 'a' is the SFR address,
+                                    0-FF, and bit# is 0-7.
+    Then     name            will set that bit in the SFR.  ( -- )
+    NOTE: this will only work with the bit-addressible SFRs,
+    80,88,90,88....F0,F8.
+
+SFCLRB: ( n a -- )  Builds a Forth word which clears a given bit in a
+    given SFR.
+    Usage:   bit# a SFCLRB: name    where 'a' is the SFR address,
+                                    0-FF, and bit# is 0-7.
+    Then     name            will clear that bit in the SFR.  ( -- )
+    NOTE: this will only work with the bit-addressible SFRs,
+    80,88,90,88....F0,F8.
+
+As an example, here are words to enable and disable External Interrupt
+1.  This is controller by bit 2 in the IE register (0A8 hex).
+
+    HEX 2 A8 SFSETB: EXT1-ENABLE
+        2 A8 SFCLRB: EXT1-DISABLE
+
+    EXT1-ENABLE     ( enables External Interrupt 1 )
+    EXT1-DISABLE    ( disables External Interrupt 1 )
+
+    HEX A8 SF@: @IE
+
+    @IE .       ( fetches and prints the current contents of IE )
+
+
+EXPERIMENTAL WORDS FOR MACHINE CODE PROGRAMMING (CODE.ASM)
+==========================================================
+CamelForth/52 does not include an 8051 assembler.  You can build
+machine-code words by hand-assembling the code and using I, and IC, to
+append the opcodes and operands to the dictionary.
+
+CODE ( -- )   Begins a machine-code Forth word.  (Builds a header for
+              a CODE word.)
+              Usage:    CODE name
+
+END-CODE ( -- )   Ends a machine-code Forth word.  (At present, this
+                  does nothing; it's purely for appearance.)
+
+As an example, this is a word to increment RAM location 40h:
+    CODE INC40   HEX 05 IC, 40 IC, 22 IC,  END-CODE
+Note that the machine code must end with a RET instruction, opcode 22h.
+
+
+KERNEL MODIFICATIONS FOR FLASH ROM (CYGNAL C8051F)
+==================================================
+The Cygnal C8051F includes flash ROM which can be written a byte at a
+time under program control.  It can be erased in 512-byte sectors.
+The erase state of a byte is 'FF', after which any bit can be written to
+'0', but may not be changed back to '1'.  This has implications for
+Forth compilation which "patches" previously compiled cells (e.g. branch
+addresses).
+
+1. IMMEDIATE.  In CamelForth/8051, words are CREATEd with their
+    precedence flag set to 00; IMMEDIATE changes this to 01.  To
+    support Flash ROM, CamelForth/8052 uses 'FF' as the default
+    precedence flag, and IMMEDIATE changes it to 'FE'.  (The high 7 bits
+    of the precedence flag are reserved for future use.)
+
+2. Branch offsets.  Several words, notably IF ELSE LEAVE WHILE and ?DO,
+    compile a "dummy" forward branch which is then later resolved (by
+    THEN REPEAT or LOOP).  So that this branch offset can be patched
+    later, CamelForth/8052 skips the branch offset byte rather than
+    compiling a dummy offset.
+
+3. CREATE DOES>.  CREATE must compile the 'docreate' action so that it
+    can be used to create data structures.  However, DOES> in a defining
+    word must be able to change the action of the last CREATEd word.
+    As an expedient solution for Flash ROM, the new word <BUILDS
+    (the old fig-Forth name) creates a new word in the Forth dictionary
+    but does *not* compile anything for the address cell.
+
+    Example usage:  : OFFSET  ( n -- )
+                        <BUILDS I,  ( create word, store offset in ROM)
+                        IDOES>  ( a -- a+n )
+                        I@          ( skip 'HERE', fetch offset)
+                        + ;         ( add offset to top stack item)
+
+    NOTE: <BUILDS DOES *NOT* STORE THE VALUE OF 'HERE' IN THE FIRST ROM
+    CELL.  If you wish to use DOES> (rather than IDOES>), you must store
+    HERE manually.  For example,
+
+                    : CVARIABLE ( -- )
+                        <BUILDS  HERE I,  1 ALLOT
+                        DOES> ;     ( returns RAM address )
+
+
+UTILITY WORDS TO SUPPORT CYGNAL C8051F FLASH ROM
+================================================
++WRITE ( -- )   enable writes to flash ROM.
+    NOTE: you *must* use +WRITE before you can begin adding definitions
+    to the CamelForth dictionary.  (+WRITE is done as part of
+    coldstart.)
+
+-WRITE ( -- )   disable writes to flash ROM.  (i.e., write-protect)
+
++ERASE ( -- )   enable erases to flash ROM.
+
+-ERASE ( -- )   disable erases to flash ROM.
+    NOTE: this leaves the flash ROM write-enabled (i.e., +WRITE).
+
+WIPE ( loaddr hiaddr -- )   erases flash ROM.
+    This erases enough 512-byte blocks of ROM to erase the range
+    'loaddr' to 'hiaddr-1' inclusive.  I.e., if you say either
+            HEX 4123 79AB ERASE
+    or      HEX 4000 8000 ERASE
+    you will erase locations from 4000 to 7FFF.  WIPE will not erase
+    addresses below 2000h.  As a safety feature, you *must* use +ERASE
+    before each WIPE.
+
+IALIGN ( -- )   adjust IHERE up to the next 512-byte boundary.
+
+MARKER ( -- )   the functions of MARKER words have been extended to
+    support block-allocated flash ROM.
+    1. When a MARKER word is defined, it is forced to begin on a
+       512-byte boundary.  This ensures that the flash ROM can be
+       erased when the MARKER word is removed from the dictionary.
+    2. When a MARKER word is executed -- removing itself from the
+       dictionary -- all of the flash ROM from the MARKER word up to the
+       last used code address is erased.
+    The syntax and use of MARKER is unchanged.  Flash ROM erasure is
+    automatic and invisible to the programmer.
+
+METALINK ASSEMBLER MODIFICATIONS
+================================
+To avoid conflict with the Metalink assembler, the following labels
+are renamed:
+
+       AND  -> ANDD
+       OR   -> ORR
+       XOR  -> XORR
+       MOD  -> MODD
+       CR   -> CRR
+
+RAM AUTOLOAD (GENERIC 8052)
+============
+When CamelForth starts, it copies data from a ROM table to the User Area
+in internal RAM (currently, locations 08-13h).  No application
+variables (internal RAM locations 14-7F) are initialized.
+
+RAM AUTOLOAD (CYGNAL C8051F)
+============
+When CamelForth starts, it copies flash ROM from 8000-8077 to internal
+RAM locations 08-7F.  (The 128-byte block of flash ROM at 8000 is
+intended by Cygnal for RAM initialization.)  This initializes the user
+(system) variables, plus any application variables that have been
+defined from 14-7F.
+
+After the application is loaded, and any RAM variables have been set
+to their desired values, use SAVE-RAM to copy internal RAM locations
+08-7F to the flash ROM.  SAVE-RAM will erase the flash ROM from
+8000-807F, and then copy internal RAM to the first 120 bytes.  (The last
+8 bytes of flash ROM, 8078-807F, are available for your use. After
+erasure, you can store to these locations with I! and IC!. However,
+remember that SAVE-RAM will erase these locations.)
+
+Several key user variables are initialized by RAM autoload:
+    BASE    controls the number base used after reset (HEX or DECIMAL)
+    DP      the next available RAM location
+    LATEST  the last word defined in the dictionary
+    IDP     the next available ROM location
+It is important to not do SAVE-RAM until you've loaded your complete
+application.  If you SAVE-RAM too soon, the dictionary pointers will be
+incorrect and some RAM or ROM locations may be inadvertently
+overwritten.  (See also "Autostart", below.)
+
+AUTOSTART
+=========
+When CamelForth starts, it will initialize RAM (described above), and
+then execute the *last* word found in the dictionary.  In the basic
+kernel, this is the word MAIN which displays a signon message and then
+starts the Forth interpreter.
+
+When you compile an application, you must provide a new startup word.
+Normally this is the last word in your source code.  If you want to
+autostart a different word, you must add an "alias" word at the end of
+your code, e.g.
+    : STARTUP   MY-START-WORD ;
+
+If you want to autostart the CamelForth interpreter instead of your
+own code, add
+    : STARTUP   MAIN ;
+at the end of your source code.
+
+The name of the startup word is unimportant.  CamelForth will use the
+LATEST pointer (the last word linked into the dictionary) to find the
+startup word.
+
+Generic 8052: You must manually install the address of the startup word
+    in the RAM initialization table (found at the end of Camel52.asm.)
+
+Cygnal C8051F:  *NOTE* that you must do a SAVE-RAM to update the
+    permanent copy of LATEST!  (Strictly speaking, CamelForth
+    autostarts the last word compiled before the last use of SAVE-RAM.)
+
+
+GOTCHAS
+=======
+These are things that have tripped me up while testing on the Cygnal:
+
+1. 40 character lines.  When I type definitions from the keyboard, I
+   sometimes go past 40 characters.  The extra characters are ignored
+   with no warning message.  This is particularly perplexing when the
+   end of a Forth definition is cut off; since it never sees the ";"
+   it remains in compile state and doesn't say "ok".
+
+2. Forgetting +WRITE.  Attempting to compile into write-protected ROM
+   will make the dictionary unreadable.  (You can tell this has happened
+   when the interpreter can't find any words, but can still accept
+   numbers.)  This has been such a nuisance that I now enable +WRITE
+   as part of the CamelForth init, and also after WIPE (flash erase).
+
+3. Forgetting to erase flash before defining new words in those ROM
+   locations.  This also will make the dictionary unreadable.  This is
+   most likely to happen if you do a processor reset without having done
+   a SAVE-RAM.  Then your application is still in ROM but the dictionary
+   pointers are set to the "old" values.  In this case, you can use WIPE
+   to erase the flash, e.g.,
+        HEX 2000 7E00 +ERASE WIPE
+       (+ERASE is a separate step as a safety measure.)
+   If you use MARKER words to reclaim ROM, and are careful to SAVE-RAM
+   when you change the dictionary state, you shouldn't have a problem.
+
+
+--------------------------- LICENSE TERMS ------------------------------
+CamelForth for the Intel 8052/Cygnal C8051F
+(c) 2001 Bradford J. Rodriguez.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+Commercial inquiries should be directed to the author at 
+115 First St., #105, Collingwood, Ontario L9Y 4W3 Canada
+or via email to bj@camelforth.com
+------------------------------------------------------------------------
