@@ -196,12 +196,12 @@ reset:	; Cygnal C8051F initialization
 	mov WDTCN,#0xDE
 	mov WDTCN,#0xAD
 	; Start up the XTAL oscillator (but don't use it yet!)
-	mov OSCXCN,#0x65
+	mov OSCXCN,#0b01100101
 
 	; Enable I/O functions: I2C, SPI, UART, 4 captures
-	mov XBR0,#0x47
+	mov XBR0,#0b00100111
 	; Enable I/O functions: T2, SYSCLK
-	mov XBR1,#0xA0
+	mov XBR1,#0b10100000
 	; Enable the Port I/O Crossbar & weak pull ups
 	mov XBR2,#0x40
 	; P0.0 SDA ( I2C )
@@ -219,23 +219,23 @@ reset:	; Cygnal C8051F initialization
 	; P1.4 T2
 	; P1.5 /SYSCLK
 
-	mov PRT0CF,#0x5B	; TX, MOSI, SCK & SC all outputs
-	mov PRT1CF,#0x51	; CEX0 & green LED outputs
+	mov PRT0CF,#0b01010110	; TX, MOSI, SCK & SC all outputs
+	mov PRT1CF,#0b01110001	; CEX0 & green LED outputs
 
 	; Initialize LED to OFF
 	clr GREEN_LED
 	; UART setup
 	mov RCAP2L,#0xFA	; Autoload value for 57.6Kbaud
 	mov RCAP2H,#0xFF	; with 11.0592 MHz XTAL
-	orl T2CON,#0x34		; T2 is Baudrate gen. RCLK & TCLK =1
-	orl SCON,#0x70		; Serial Mode 1
+	orl T2CON,#0b00110100	; T2 is Baudrate gen. RCLK & TCLK =1
+	orl SCON,#0b01110000		; Serial Mode 1
 	; Wait for XTAL stable and valid
 
 osc_wait:
 	mov a,OSCXCN
 	jnb acc.7, osc_wait
-	orl OSCICN,#0x08	;select extn XTAL osc as sys clock
-	anl OSCICN,#~0x04	; disable internal oscillator
+	orl OSCICN,#0b00001000	;select extn XTAL osc as sys clock
+	anl OSCICN,#~0b00000100	; disable internal oscillator
 
 	; Flash Memory Timing
 	mov FLSCL,#0x88	; 6.4 MHz <= System Clock < 12.8 MHz

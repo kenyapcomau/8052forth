@@ -6,6 +6,6 @@ This is a revival of Brad Rodriguez's CamelForth for the 8052 downloadable as ca
 
 The easiest way to get the required tools is to get the SDCC C compiler toolkit where they have renamed the assembler and linker sdas8051 and sdld respectively.
 
-At the moment it assembles to exactly the same binary file as the one in the archive, proving that I have not broken anything. Incidentally the hex file that's in the archive was built from a slightly older version of the provided source, only different i the greeting message.
+At the moment it assembles to exactly the same binary file as the one in the archive, proving that I have not broken anything. Incidentally the hex file that's in the archive was built from a slightly older version of the provided source, only different in the greeting message.
 
 The license of this code is GPL3, see copying.
